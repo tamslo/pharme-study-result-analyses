@@ -198,7 +198,7 @@ def _get_medication_comprehension_column_name(
 ) -> str:
     return (
         f"{comprehension_column}_{medication}_"
-        f"{format_time_point_name(time_point.name)}"
+        f"({format_time_point_name(time_point.name)})"
     )
 
 
@@ -207,6 +207,23 @@ def _get_comprehension_questionnaire_medications() -> list[str]:
         comprehension_data = json.load(comprehension_data_file)
     return sorted(
         next(iter(comprehension_data.values()))["medications"].keys(),
+    )
+
+
+def _format_correlation_variable(
+    variable: str,
+) -> str:
+    formatted_variable = format_output_label(variable, label_definition=None)
+    return (
+        formatted_variable.replace("Hcp", "HCP")
+        .replace(
+            "Taking medication",
+            "Taking",
+        )
+        .replace(
+            "Medication specific comprehension",
+            "Medication-specific comprehension for",
+        )
     )
 
 
@@ -454,13 +471,11 @@ def analyze_correlations() -> tuple[DataFrame, DataFrame, DataFrame, DataFrame]:
                 ]
                 correlation_results.append(
                     [
-                        format_output_label(
+                        _format_correlation_variable(
                             first_variable_column,
-                            label_definition=None,
                         ),
-                        format_output_label(
+                        _format_correlation_variable(
                             second_variable_column,
-                            label_definition=None,
                         ),
                         "⍴",  # noqa: RUF001
                         correlation_value,
@@ -477,13 +492,11 @@ def analyze_correlations() -> tuple[DataFrame, DataFrame, DataFrame, DataFrame]:
                     ]
                     means_data.append(
                         [
-                            format_output_label(
+                            _format_correlation_variable(
                                 first_variable_column,
-                                label_definition=None,
                             ),
-                            format_output_label(
+                            _format_correlation_variable(
                                 second_variable_column,
-                                label_definition=None,
                             ),
                             correlation_value,
                             first_value,
