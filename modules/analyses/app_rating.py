@@ -112,7 +112,10 @@ def analyze_app_rating() -> None:
         subscale_mean_list,
         zeros_are_na=False,
     )
-    title_addition = f" (mean: {format_float(overall_mean)})"
+    title_addition = (
+        f"\n(n = {len(overall_rating_data)}, "
+        f"mean: {format_float(overall_mean)})"
+    )
     create_radar_chart(
         survey=survey,
         data=overall_rating_data,
@@ -133,14 +136,13 @@ def analyze_app_rating() -> None:
                 survey,
                 subscale_columns,
             )
-            title_addition = (
-                (
-                    "\n(mean by participant: "
-                    f"{format_float(subscale_means[subscale_name])})"
+            title_addition = f"\n(n = {len(data)}"
+            if subscale_mean in subscale_means:
+                title_addition += (
+                    ", mean by participant: "
+                    f"{format_float(subscale_means[subscale_name])}"
                 )
-                if subscale_name in subscale_means
-                else ""
-            )
+            title_addition += ")"
             create_radar_chart(
                 survey=survey,
                 data=data,

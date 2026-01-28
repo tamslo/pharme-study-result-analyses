@@ -13,6 +13,7 @@
         "cnames",
         "cohens",
         "cohensd",
+        "colwidth",
         "cramers",
         "cramersv",
         "crosstab",
