@@ -1,8 +1,17 @@
 """Utils and definitions for REDcap data."""
 
+import json
+from pathlib import Path
+
 import requests
 
-from modules.definitions.constants import EHIVE_ID, PHARME_ID, get_config
+from modules.definitions.constants import (
+    EHIVE_ID,
+    EXTERNAL_DATA_DIRECTORY,
+    PHARME_ID,
+    get_bool_from_env,
+    get_config,
+)
 
 
 def _get_from_redcap(content: str) -> list[dict]:
@@ -33,8 +42,23 @@ def get_pharme_id(
 
 def get_redcap_users() -> list[dict]:
     """Get a the list of participants (records) in REDcap."""
+    use_cache = get_bool_from_env(
+        "USE_REDCAP_CACHE",
+    )
+    redcap_cache_file = Path(
+        f"{EXTERNAL_DATA_DIRECTORY}/redcap_users_cache.json",
+    )
+    if use_cache and Path.exists(redcap_cache_file):
+        print("ℹ️ Using cached REDCap users")  # noqa: RUF001, T201
+        with Path.open(redcap_cache_file, "r") as user_cache_file:
+            user_data = json.load(user_cache_file)
+    else:
+        user_data = _get_from_redcap("record")
+    if use_cache and not Path.exists(redcap_cache_file):
+        with Path.open(redcap_cache_file, "w") as user_cache_file:
+            json.dump(user_data, user_cache_file)
     return [
         record
-        for record in _get_from_redcap("record")
+        for record in user_data
         if record["study_id"] not in ["JaneDoe", "PharMe_Test"]
     ]

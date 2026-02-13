@@ -1,7 +1,9 @@
 """Code to create demographic table."""
 
+import json
 import logging
 from collections import OrderedDict
+from pathlib import Path
 
 import pandas as pd
 from pandas import DataFrame, Series
@@ -13,8 +15,12 @@ from modules.analyses.health_literacy import (
     get_health_literacy_scores,
 )
 from modules.definitions.constants import (
+    EHIVE_ID,
     MULTIPLE_VALUES_SEPARATOR,
     PARTICIPANT_ID,
+    PHARME_ID,
+    PHENOTYPE_MEDICATIONS_DATA,
+    REDCAP_STUDY_GROUPS,
     SCORE_COLUMN,
 )
 from modules.definitions.types import StudyGroup, Survey
@@ -24,14 +30,17 @@ from modules.survey_results.get_data import (
     get_survey_results,
 )
 from modules.survey_results.redcap_data import redcap_data_are_complete
+from modules.utils.anonymization import get_participant_id_map
 from modules.utils.data import get_label_definition
 from modules.utils.output_formatting import (
     format_float,
     format_output_label,
     format_percentage,
 )
+from modules.utils.redcap import get_redcap_users
 from modules.utils.sorting import sort_by_label
 from modules.utils.statistics import (
+    ALPHA,
     are_study_groups_different_categorical,
     are_study_groups_different_parametric,
 )
@@ -313,3 +322,256 @@ def get_demographic_table() -> tuple[DataFrame, list[str]]:
         SELF_EFFICACY_FOOTNOTE,
         BASELINE_KNOWLEDGE_FOOTNOTE,
     ]
+
+
+def _get_value_count(
+    value: any,
+    values: DataFrame,
+    study_group: StudyGroup,
+) -> int:
+    study_group_values = filter_results_by_study_group(values, study_group)
+    study_group_counts = study_group_values.value_counts()
+    if value in study_group_counts:
+        return study_group_counts.loc[value].sum()
+    return 0
+
+
+ALL_GREEN = "All green"
+AT_LEAST_ONE_YELLOW = "At least one yellow (no red)"
+AT_LEAST_ONE_RED = "At least one red"
+warning_level_info_columns = ["level", PARTICIPANT_ID]
+
+
+def _get_warning_level_info(user_warning_levels: any) -> list[any]:
+    if user_warning_levels["red"] > 0:
+        return AT_LEAST_ONE_RED
+    if user_warning_levels["yellow"] > 0:
+        return AT_LEAST_ONE_YELLOW
+    return ALL_GREEN
+
+
+def get_medications_and_phenotypes_table() -> tuple[  # noqa: C901
+    DataFrame,
+    DataFrame,
+    DataFrame,
+]:
+    """Create the medications and phenotypes table."""
+    data = json.load(Path.open(PHENOTYPE_MEDICATIONS_DATA, "r"))
+    redcap_users = get_redcap_users()
+    id_map = get_participant_id_map()
+    phenotype_data = []
+    medication_data = []
+    medication_counts = []
+    active_warning_count_data = []
+    overall_warning_count_data = []
+    for redcap_user in redcap_users:
+        pharme_id = redcap_user[PHARME_ID]
+        if pharme_id not in data:
+            continue
+        user_data = data[pharme_id]
+        redcap_randomization = redcap_user["randomization"]
+        if redcap_randomization not in REDCAP_STUDY_GROUPS:
+            continue
+        participant_id = id_map[redcap_user[EHIVE_ID]]
+        for gene in user_data["phenotypes"]:
+            phenotype = user_data["phenotypes"][gene]
+            phenotype_row = [
+                gene,
+                phenotype,
+                participant_id,
+            ]
+            phenotype_data.append(phenotype_row)
+        medication_counts.append(
+            [len(user_data["medications"]), participant_id],
+        )
+        for active_medication in user_data["medications"]:
+            medication_data.append(  # noqa: PERF401
+                [
+                    active_medication,
+                    participant_id,
+                ],
+            )
+        active_warning_count_data.append(
+            [
+                _get_warning_level_info(user_data["warningLevels"]["active"]),
+                participant_id,
+            ],
+        )
+        overall_warning_count_data.append(
+            [
+                _get_warning_level_info(user_data["warningLevels"]["overall"]),
+                participant_id,
+            ],
+        )
+    phenotype_data = DataFrame(
+        phenotype_data,
+        columns=["gene", "phenotype", PARTICIPANT_ID],
+    ).sort_values(
+        by=["gene", "phenotype", PARTICIPANT_ID],
+    )
+    phenotype_data.loc[phenotype_data["phenotype"].isna(), "phenotype"] = (
+        "Indeterminate"
+    )
+    medication_counts = DataFrame(
+        medication_counts,
+        columns=["count", PARTICIPANT_ID],
+    )
+    medication_data = DataFrame(
+        medication_data,
+        columns=["medication", PARTICIPANT_ID],
+    )
+    active_warning_count_data = DataFrame(
+        active_warning_count_data,
+        columns=warning_level_info_columns,
+    )
+    overall_warning_count_data = DataFrame(
+        overall_warning_count_data,
+        columns=warning_level_info_columns,
+    )
+    medications_and_phenotypes_table = []
+
+    for medication_count in sorted(medication_counts["count"].unique()):
+        medications_and_phenotypes_table.append(  # noqa: PERF401
+            [
+                "Number of active medications",
+                are_study_groups_different_categorical(
+                    medication_counts,
+                    "count",
+                ).p_value,
+                medication_count,
+                _get_value_count(
+                    medication_count,
+                    medication_counts,
+                    StudyGroup.PHARME,
+                ),
+                _get_value_count(
+                    medication_count,
+                    medication_counts,
+                    StudyGroup.COUNSELING,
+                ),
+            ],
+        )
+    for warning_level in [ALL_GREEN, AT_LEAST_ONE_YELLOW, AT_LEAST_ONE_RED]:
+        medications_and_phenotypes_table.append(  # noqa: PERF401
+            [
+                "Warning levels (active medications)",
+                are_study_groups_different_categorical(
+                    active_warning_count_data,
+                    "level",
+                ).p_value,
+                warning_level,
+                _get_value_count(
+                    warning_level,
+                    active_warning_count_data,
+                    StudyGroup.PHARME,
+                ),
+                _get_value_count(
+                    warning_level,
+                    active_warning_count_data,
+                    StudyGroup.COUNSELING,
+                ),
+            ],
+        )
+    for warning_level in [ALL_GREEN, AT_LEAST_ONE_YELLOW, AT_LEAST_ONE_RED]:
+        medications_and_phenotypes_table.append(  # noqa: PERF401
+            [
+                "Warning levels (overall)",
+                are_study_groups_different_categorical(
+                    overall_warning_count_data,
+                    "level",
+                ).p_value,
+                warning_level,
+                _get_value_count(
+                    warning_level,
+                    overall_warning_count_data,
+                    StudyGroup.PHARME,
+                ),
+                _get_value_count(
+                    warning_level,
+                    overall_warning_count_data,
+                    StudyGroup.COUNSELING,
+                ),
+            ],
+        )
+    medications_and_phenotypes_table = DataFrame(
+        medications_and_phenotypes_table,
+        columns=["Category", "p", "Value", "Case group", "Control group"],
+    ).set_index(["Category", "p", "Value"])
+    detailed_medications = []
+    for medication in sorted(medication_data["medication"].unique()):
+        detailed_medications.append(  # noqa: PERF401
+            [
+                are_study_groups_different_categorical(
+                    medication_data,
+                    "medication",
+                ).p_value,
+                medication,
+                _get_value_count(
+                    medication,
+                    medication_data,
+                    StudyGroup.PHARME,
+                ),
+                _get_value_count(
+                    medication,
+                    medication_data,
+                    StudyGroup.COUNSELING,
+                ),
+            ],
+        )
+    detailed_medications = DataFrame(
+        detailed_medications,
+        columns=["p", "Medication", "Case group", "Control group"],
+    ).set_index(["p", "Medication"])
+    detailed_phenotype_data = []
+    for gene in phenotype_data["gene"].unique():
+        gene_data = phenotype_data[phenotype_data["gene"] == gene]
+        test_result = are_study_groups_different_categorical(
+            gene_data,
+            "phenotype",
+        )
+        p_value = test_result.p_value
+        if p_value < ALPHA:
+            print(  # noqa: T201
+                f"ℹ️ Effect for {gene}: {test_result.effect_method} = "  # noqa: RUF001
+                f"{test_result.effect_size}",
+            )
+        for phenotype in gene_data["phenotype"].unique():
+            phenotype_subset = phenotype_data[
+                (phenotype_data["gene"] == gene)
+                & (phenotype_data["phenotype"] == phenotype)
+            ]
+            case_count = len(
+                filter_results_by_study_group(
+                    phenotype_subset,
+                    StudyGroup.COUNSELING,
+                ),
+            )
+            control_count = len(
+                filter_results_by_study_group(
+                    phenotype_subset,
+                    StudyGroup.PHARME,
+                ),
+            )
+            summary_row = [
+                gene,
+                p_value,
+                phenotype,
+                case_count,
+                control_count,
+            ]
+            detailed_phenotype_data.append(summary_row)
+    detailed_phenotype_data = DataFrame(
+        detailed_phenotype_data,
+        columns=[
+            "Gene",
+            "p",
+            "Phenotype",
+            "Case group",
+            "Control group",
+        ],
+    ).set_index(["Gene", "p", "Phenotype"])
+    return (
+        medications_and_phenotypes_table,
+        detailed_medications,
+        detailed_phenotype_data,
+    )
