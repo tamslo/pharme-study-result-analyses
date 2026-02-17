@@ -328,12 +328,19 @@ def _get_value_count(
     value: any,
     values: DataFrame,
     study_group: StudyGroup,
-) -> int:
+) -> tuple[int, str]:
     study_group_values = filter_results_by_study_group(values, study_group)
     study_group_counts = study_group_values.value_counts()
-    if value in study_group_counts:
-        return study_group_counts.loc[value].sum()
-    return 0
+    if value not in study_group_counts:
+        return 0, "0"
+    value_count = study_group_counts.loc[value].sum()
+    value_count_string = (
+        f"{value_count} ({round(value_count / len(study_group_values) * 100)}%)"
+    )
+    return (
+        value_count,
+        value_count_string,
+    )
 
 
 ALL_GREEN = "All green"
@@ -350,7 +357,10 @@ def _get_warning_level_info(user_warning_levels: any) -> list[any]:
     return ALL_GREEN
 
 
-def get_medications_and_phenotypes_table() -> tuple[  # noqa: C901
+# This should be refactored to reduce complexity, but it is currently not a
+# priority as it is only used for the demographics table and will not be updated
+# anymore after the final analyses are done
+def get_medications_and_phenotypes_table() -> tuple[  # noqa: C901, PLR0915
     DataFrame,
     DataFrame,
     DataFrame,
@@ -434,7 +444,7 @@ def get_medications_and_phenotypes_table() -> tuple[  # noqa: C901
         medications_and_phenotypes_table.append(  # noqa: PERF401
             [
                 "Number of active medications",
-                are_study_groups_different_categorical(
+                are_study_groups_different_parametric(
                     medication_counts,
                     "count",
                 ).p_value,
@@ -442,13 +452,13 @@ def get_medications_and_phenotypes_table() -> tuple[  # noqa: C901
                 _get_value_count(
                     medication_count,
                     medication_counts,
-                    StudyGroup.PHARME,
-                ),
+                    StudyGroup.COUNSELING,
+                )[0],
                 _get_value_count(
                     medication_count,
                     medication_counts,
-                    StudyGroup.COUNSELING,
-                ),
+                    StudyGroup.PHARME,
+                )[0],
             ],
         )
     for warning_level in [ALL_GREEN, AT_LEAST_ONE_YELLOW, AT_LEAST_ONE_RED]:
@@ -463,13 +473,13 @@ def get_medications_and_phenotypes_table() -> tuple[  # noqa: C901
                 _get_value_count(
                     warning_level,
                     active_warning_count_data,
-                    StudyGroup.PHARME,
-                ),
+                    StudyGroup.COUNSELING,
+                )[0],
                 _get_value_count(
                     warning_level,
                     active_warning_count_data,
-                    StudyGroup.COUNSELING,
-                ),
+                    StudyGroup.PHARME,
+                )[0],
             ],
         )
     for warning_level in [ALL_GREEN, AT_LEAST_ONE_YELLOW, AT_LEAST_ONE_RED]:
@@ -484,18 +494,18 @@ def get_medications_and_phenotypes_table() -> tuple[  # noqa: C901
                 _get_value_count(
                     warning_level,
                     overall_warning_count_data,
-                    StudyGroup.PHARME,
-                ),
+                    StudyGroup.COUNSELING,
+                )[0],
                 _get_value_count(
                     warning_level,
                     overall_warning_count_data,
-                    StudyGroup.COUNSELING,
-                ),
+                    StudyGroup.PHARME,
+                )[0],
             ],
         )
     medications_and_phenotypes_table = DataFrame(
         medications_and_phenotypes_table,
-        columns=["Category", "p", "Value", "Case group", "Control group"],
+        columns=["Category", "p", "Value", "Control group", "Case group"],
     ).set_index(["Category", "p", "Value"])
     detailed_medications = []
     for medication in sorted(medication_data["medication"].unique()):
@@ -509,22 +519,25 @@ def get_medications_and_phenotypes_table() -> tuple[  # noqa: C901
                 _get_value_count(
                     medication,
                     medication_data,
-                    StudyGroup.PHARME,
-                ),
+                    StudyGroup.COUNSELING,
+                )[0],
                 _get_value_count(
                     medication,
                     medication_data,
-                    StudyGroup.COUNSELING,
-                ),
+                    StudyGroup.PHARME,
+                )[0],
             ],
         )
     detailed_medications = DataFrame(
         detailed_medications,
-        columns=["p", "Medication", "Case group", "Control group"],
+        columns=["p", "Medication", "Control group", "Case group"],
     ).set_index(["p", "Medication"])
     detailed_phenotype_data = []
     for gene in phenotype_data["gene"].unique():
-        gene_data = phenotype_data[phenotype_data["gene"] == gene]
+        gene_phenotype_data = []
+        gene_data = phenotype_data[phenotype_data["gene"] == gene].drop(
+            columns=["gene"],
+        )
         test_result = are_study_groups_different_categorical(
             gene_data,
             "phenotype",
@@ -536,38 +549,42 @@ def get_medications_and_phenotypes_table() -> tuple[  # noqa: C901
                 f"{test_result.effect_size}",
             )
         for phenotype in gene_data["phenotype"].unique():
-            phenotype_subset = phenotype_data[
-                (phenotype_data["gene"] == gene)
-                & (phenotype_data["phenotype"] == phenotype)
-            ]
-            case_count = len(
-                filter_results_by_study_group(
-                    phenotype_subset,
-                    StudyGroup.COUNSELING,
-                ),
+            control_count, control_count_string = _get_value_count(
+                phenotype,
+                gene_data,
+                StudyGroup.COUNSELING,
             )
-            control_count = len(
-                filter_results_by_study_group(
-                    phenotype_subset,
-                    StudyGroup.PHARME,
-                ),
+            case_count, case_count_string = _get_value_count(
+                phenotype,
+                gene_data,
+                StudyGroup.PHARME,
             )
             summary_row = [
                 gene,
-                p_value,
+                format_float(p_value),
                 phenotype,
-                case_count,
-                control_count,
+                control_count_string,
+                case_count_string,
             ]
-            detailed_phenotype_data.append(summary_row)
+            gene_phenotype_data.append(
+                (control_count + case_count, summary_row),
+            )
+        sorted_gene_phenotype_data = [
+            count_and_summary_row[1]
+            for count_and_summary_row in sorted(
+                gene_phenotype_data,
+                reverse=True,
+            )
+        ]
+        detailed_phenotype_data += sorted_gene_phenotype_data
     detailed_phenotype_data = DataFrame(
         detailed_phenotype_data,
         columns=[
             "Gene",
             "p",
             "Phenotype",
-            "Case group",
             "Control group",
+            "Case group",
         ],
     ).set_index(["Gene", "p", "Phenotype"])
     return (
