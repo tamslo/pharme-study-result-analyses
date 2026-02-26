@@ -506,7 +506,13 @@ def get_medications_and_phenotypes_table() -> tuple[  # noqa: C901, PLR0915
     medications_and_phenotypes_table = DataFrame(
         medications_and_phenotypes_table,
         columns=["Category", "p", "Value", "Control group", "Case group"],
-    ).set_index(["Category", "p", "Value"])
+    )
+    medications_and_phenotypes_table["p"] = medications_and_phenotypes_table[
+        "p"
+    ].apply(format_float)
+    medications_and_phenotypes_table = (
+        medications_and_phenotypes_table.set_index(["Category", "p", "Value"])
+    )
     detailed_medications = []
     for medication in sorted(medication_data["medication"].unique()):
         detailed_medications.append(  # noqa: PERF401
