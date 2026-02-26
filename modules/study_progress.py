@@ -51,7 +51,7 @@ def _get_potentially_lost_cases(
     return potentially_lost_cases
 
 
-def get_study_progress() -> tuple[str, pd.DataFrame, pd.DataFrame]:
+def get_study_progress() -> tuple[str, pd.DataFrame, pd.DataFrame]:  # noqa: C901
     """Get study progress based on REDCap data.
 
     Print progress and return potentially lost cases and partial surveys.
