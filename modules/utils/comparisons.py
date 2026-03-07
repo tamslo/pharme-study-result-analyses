@@ -105,6 +105,39 @@ def _get_formatted_mean_score(
     return f"mean score: {round(mean_score, ndigits=2)}"
 
 
+def _maybe_get_mapped_mean_score(
+    participant_data: Series,
+) -> float:
+    value_map = {
+        "strongly_disagree": -2,
+        "disagree": -1,
+        "neutral": 0,
+        "agree": 1,
+        "strongly_agree": 2,
+        "Not answered": None,
+    }
+    ignore_with_values = [
+        "not_at_all_true",
+        "hardly_true",
+        "moderately_true",
+        "often",
+        "always",
+        "somewhat",
+        "inadequate",
+        "adequate",
+    ]
+    participant_values = participant_data.unique()
+    for value in ignore_with_values:
+        if value in participant_values:
+            return None
+    for value in participant_values:
+        if value not in value_map:
+            message = f"Value '{value}' not in value map when mapping to mean"
+            raise ValueError(message)
+    mapped_data = participant_data.map(value_map).dropna()
+    return mapped_data.mean()
+
+
 def _get_formatted_median_answer(
     participant_data: Series,
     label_definition: OrderedDict,
@@ -113,12 +146,19 @@ def _get_formatted_median_answer(
         participant_data,
         label_definition,
     )
+    mapped_mean = _maybe_get_mapped_mean_score(participant_data)
     median_answer_string = format_output_label(
         MULTIPLE_VALUES_SEPARATOR.join(median_answer),
         label_definition,
     )
+    formatted_median_answer = f"median answer: {median_answer_string}"
+    if mapped_mean is not None:
+        formatted_median_answer = (
+            f"{formatted_median_answer} "
+            f"(mapped mean: {format_float(mapped_mean)})"
+        )
     return break_text_after_characters(
-        f"median answer: {median_answer_string}",
+        formatted_median_answer,
         35,
     )
 
